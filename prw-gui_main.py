@@ -2,8 +2,8 @@ import subprocess
 import sys  # import OS/system level tools
 from os import path
 from PySide import QtCore, QtGui
-from mainwindow import Ui_MainWindow
-from rwparser import RwParser
+from prwlib.mainwindow import Ui_MainWindow
+from prwlib.rwparser import RwParser
 from datetime import datetime, timedelta
 
 TUTORIAL = """Tutorial
@@ -317,19 +317,24 @@ class ParseWindow(QtGui.QMainWindow, Ui_MainWindow):
     def parseButton_clicked(self):
         rwparser = RwParser()
         if self.excelCheckBox.isChecked():
+            
             # filter, calculate hourly, running streaks etc.
             rwparser.parseDistData(self.distCsvName, self.fileNameNoExt, 
-                    self.newFolderPath, self.qtStartDateTime, self.qtEndDateTime)
+                self.newFolderPath, self.qtStartDateTime, self.qtEndDateTime)
+            
             self.disableButtons()
+            
             msgBox = QtGui.QMessageBox()
             msgBox.setText("Exporting to Excel. Will take a few minutes...")
             msgBox.exec_()
             
+            # Export to Excel
+            # rwparser.exportToExcel(self.fileNameNoExt, self.newFolderPath)
+            
             # Turn off controls
             self.changableLabel.setText("Parsing complete.")
             
-            # Export to Excel
-            # rwparser.exportToExcel(self.fileNameNoExt, self.newFolderPath)
+
             
             # Turn controls back on when done
             self.changableLabel.setText("Parsing complete.")
