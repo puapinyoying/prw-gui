@@ -1,14 +1,10 @@
-import textwrap
-import re  # import regular expression library
+import subprocess
 import sys  # import OS/system level tools
 from os import path
 from PySide import QtCore, QtGui
 from mainwindow import Ui_MainWindow
 from rwparser import RwParser
 from datetime import datetime, timedelta
-
-
-
 
 TUTORIAL = """Tutorial
 
@@ -36,7 +32,7 @@ Instructions:
 
         2) Once loaded, if you would like to filter the data by start and end date/time use the drop-down boxes and time edit boxes (time format in hh:mm:ss)
 
-        3) The program will automatically output csv files of all the calculations listed above. If you would like to export all the data into a single Excel file check the box (checked by default).
+        3) The program will automatically output csv files of all the calculations listed above and automatically export the csv files into a single Excel workbook.
 
         4) Click "Parse Data" to start."""
 
@@ -48,6 +44,13 @@ class ParseWindow(QtGui.QMainWindow, Ui_MainWindow):
         QtGui.QMainWindow.__init__(self, parent)
         self.setupUi(self)
         
+        # Excel checkbox option
+        self.excelCheckState = QtCore.Qt.CheckState.Checked
+        
+        # Some time constants
+        self.QT_MIN = QtCore.QTime.fromString('00:00:00', "hh:mm:ss")
+        self.QT_MAX = QtCore.QTime.fromString('23:59:59', "hh:mm:ss")
+        
         # File name and path variables
         self.fileNameTuple = ''
         self.fullFilePath = ''
@@ -55,22 +58,29 @@ class ParseWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.fullFileName = ''
         self.fileNameNoExt = ''
         self.newFolderPath = ''
+        
+        # Important when using parse button for 2nd round filter
         self.distCsvName = ''
         
-        # Default dates and times
+        # Raw dates and times in string format
         self.uniqueDates = []
         self.startTime = ''
         self.endTime = ''
- 
+        
+        # For converted date strings QtDate used to form QtDateTime
+        self.qtStartTime = QtCore.QTime()
+        self.qtEndTime = QtCore.QTime()
+        self.qtStartDate = QtCore.QDate()
+        self.qtEndDate = QtCore.QDate()
+              
+        # Combine both into QtDateTime objects for comparing in script
+        self.qtStartDateTime = QtCore.QDateTime()
+        self.qtEndDateTime = QtCore.QDateTime()
         
         # Tool/menu bar clicks
         self.actionQuit.triggered.connect(self.actionQuit_triggered)
         self.actionAbout.triggered.connect(self.actionAbout_triggered)
         self.actionTutorial.triggered.connect(self.actionTutorial_triggered)
-        
-        # Push buttons
-        self.openButton.clicked.connect(self.openButton_clicked)
-        self.parseButton.clicked.connect(self.parseButton_clicked)
         
         # Combo boxes
         self.startDateCombo.currentIndexChanged.connect(self.startDateCombo_changed)
@@ -80,33 +90,131 @@ class ParseWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.startTimeEdit.editingFinished.connect(self.startTimeEdit_edited)
         self.startTimeEdit.editingFinished.connect(self.endTimeEdit_edited)
         
-        # Check box
-        self.excelCheckBox.clicked.connect(self.excelCheckBox_clicked)
+        # Check box doesn't need to connect to function, will check directly
+        # after pushing the parse button
+        
+        # Push buttons
+        self.openButton.clicked.connect(self.openButton_clicked)
+        self.parseButton.clicked.connect(self.parseButton_clicked)
 
+
+    def convertStartDate(self):
+        """Converts start date string into a QDate object"""
+        currStartDateString = self.startDateCombo.currentText() # get selection
+        # convert string in combo box to QDate object
+        tempQtDate = QtCore.QDate.fromString(currStartDateString, "MM/dd/yy")
+        # convert and add 100 years (defaults 2 digit years to 1900's)
+        self.qtStartDate = tempQtDate.addYears(100)
+    
+    def convertEndDate(self):
+        """Converts end date string into a QDate object"""
+        currEndDateString = self.endDateCombo.currentText()
+        tempQtDate = QtCore.QDate.fromString(currEndDateString, "MM/dd/yy")
+        self.qtEndDate = tempQtDate.addYears(100)
+        
+    def limitTimeEdit(self):
+        qtMinLimit = QtCore.QTime.fromString(self.startTime, "hh:mm:ss")
+        qtMaxLimit = QtCore.QTime.fromString(self.endTime, "hh:mm:ss")
+
+        # If the dates are the same, end time can't be greater that start time
+        # and the end time can't be less than the start time. Also limit selection
+        # to what exists in the file.
+        if self.startDateCombo.currentIndex() == self.endDateCombo.currentIndex():
+            if self.startDateCombo.currentIndex() == 0:
+                self.startTimeEdit.setMinimumTime(qtMinLimit)
+                self.endTimeEdit.setMaximumTime(self.QT_MAX)
+                self.endTimeEdit.setMinimumTime(self.startTimeEdit.time())
+                self.startTimeEdit.setMaximumTime(self.endTimeEdit.time())
+            
+            elif self.startDateCombo.currentIndex() == len(self.uniqueDates)-1:
+                self.startTimeEdit.setMinimumTime(self.QT_MIN)
+                self.endTimeEdit.setMaximumTime(self.QT_MAX)
+                self.endTimeEdit.setMinimumTime(self.startTimeEdit.time())
+                self.startTimeEdit.setMaximumTime(self.endTimeEdit.time())
+            
+            else:
+                self.startTimeEdit.setMinimumTime(self.QT_MIN)
+                self.endTimeEdit.setMaximumTime(self.QT_MAX)
+                self.endTimeEdit.setMinimumTime(self.startTimeEdit.time())
+                self.startTimeEdit.setMaximumTime(self.endTimeEdit.time())
+        
+        else: # When dates are not equal: 
+            # Set limits to the start time edit box
+            if self.startDateCombo.currentIndex() == 0: # first day
+                self.startTimeEdit.setMinimumTime(qtMinLimit)
+                self.startTimeEdit.setMaximumTime(self.QT_MAX)
+            
+            # last day 
+            elif self.startDateCombo.currentIndex() == len(self.uniqueDates)-1:
+                self.startTimeEdit.setMinimumTime(qtMaxLimit)
+                self.startTimeEdit.setMinimumTime(self.QT_MIN)
+                 
+            else: # any other mismatch day
+                self.startTimeEdit.setMinimumTime(self.QT_MIN)
+                self.startTimeEdit.setMaximumTime(self.QT_MAX)
+                 
+            # Set limits to the end time edit box
+            if self.endDateCombo.currentIndex() == 0: # first day
+                self.endTimeEdit.setMinimumTime(qtMinLimit)
+                self.endTimeEdit.setMaximumTime(self.QT_MAX)
+            
+            # last day 
+            elif self.endDateCombo.currentIndex() == len(self.uniqueDates)-1:
+                self.endTimeEdit.setMaximumTime(qtMaxLimit)
+                self.endTimeEdit.setMinimumTime(self.QT_MIN)
+                 
+            else: # any other mismatch day
+                self.endTimeEdit.setMinimumTime(self.QT_MIN)
+                self.endTimeEdit.setMaximumTime(self.QT_MAX)
+
+        
+        # Prevent start date from being later than end date
+        if self.startDateCombo.currentIndex() > self.endDateCombo.currentIndex():
+            self.startDateCombo.setCurrentIndex(self.endDateCombo.currentIndex())
+            
+        # Prevent end date from being earlier than start date
+        if self.endDateCombo.currentIndex() < self.startDateCombo.currentIndex():
+            self.endDateCombo.setCurrentIndex(self.startDateCombo.currentIndex())
+
+        
+    def updateQtDateTimes(self):
+        """Update all current filter values to QDateTime objects and set min
+        and max time values for start and end time edit boxes"""
+        # Convert QDate and QTime obj into QDateTime objects for start dateTime
+        self.qtStartTime = self.startTimeEdit.time() # update from gui edit box        
+        startDateString = QtCore.QDate.toString(self.qtStartDate, "MM/dd/yyyy")
+        startTimeString = QtCore.QTime.toString(self.qtStartTime, "hh:mm:ss")
+        tempStartString = startDateString + ' ' + startTimeString
+        self.qtStartDateTime = QtCore.QDateTime.fromString(tempStartString,"MM/dd/yyyy hh:mm:ss")
+
+        # For end dateTime
+        self.qtEndTime = self.endTimeEdit.time() # update from guit edit box
+        endDateString = QtCore.QDate.toString(self.qtEndDate, "MM/dd/yyyy")
+        endTimeString = QtCore.QTime.toString(self.qtEndTime, "hh:mm:ss")
+        tempEndString = endDateString + ' ' + endTimeString
+        self.qtEndDateTime = QtCore.QDateTime.fromString(tempEndString, "MM/dd/yyyy hh:mm:ss")  
+    
     def startDateCombo_changed(self):
-        print "what common"
+        self.convertStartDate()
+        self.updateQtDateTimes()
+        self.limitTimeEdit()
+        
+    def endDateCombo_changed(self):
+        self.convertEndDate()
+        self.updateQtDateTimes()
+        self.limitTimeEdit()
         
     def startTimeEdit_edited(self):
-        print "time to time"
-            
-    def endDateCombo_changed(self):
-        print "why man"
-        
+        self.updateQtDateTimes()
+        self.limitTimeEdit()
+                
     def endTimeEdit_edited(self):
-        print "end the time"
+        self.updateQtDateTimes()
+        self.limitTimeEdit()
 
     def getFileNameTuple(self):
         return self.fileNameTuple
-            
-    def parseButton_clicked(self):
-        t = self.getFileNameTuple()
-        msgBox = QtGui.QMessageBox()
-        msgBox.setText(t[0])
-        msgBox.exec_()
-        
-    def excelCheckBox_clicked(self):
-        print "that box is hot"
-        
+                  
     def actionAbout_triggered(self):        
         msgBox = QtGui.QMessageBox()
         msgBox.setText(
@@ -147,15 +255,20 @@ class ParseWindow(QtGui.QMainWindow, Ui_MainWindow):
                 self.startDateCombo.addItems(self.uniqueDates)
                 self.endDateCombo.addItems(self.uniqueDates)
                 
-                # set the endDate combo to the last unique date
+                # set the start and endDate combos to the first and last unique date
+                self.startDateCombo.setCurrentIndex(1)
                 self.endDateCombo.setCurrentIndex(len(self.uniqueDates)- 1)
                 
                 # Turn time strings into QTime obj and fill out time edits
-                qEndTime = QtCore.QTime.fromString(self.endTime, 'hh:mm:ss')
-                qStartTime = QtCore.QTime.fromString(self.startTime, 'hh:mm:ss')
-                self.startTimeEdit.setTime(qStartTime)
-                self.endTimeEdit.setTime(qEndTime)                
-                    
+                self.qtEndTime = QtCore.QTime.fromString(self.endTime, 'hh:mm:ss')
+                self.qtStartTime = QtCore.QTime.fromString(self.startTime, 'hh:mm:ss')
+                self.startTimeEdit.setTime(self.qtStartTime)
+                self.endTimeEdit.setTime(self.qtEndTime)              
+                               
+                # Update all current QDateTime objects
+                self.updateQtDateTimes()
+                self.limitTimeEdit()
+                  
                 # Allow user to access filters and buttons
                 self.filterLabel.setEnabled(1)
                 self.filterLine.setEnabled(1)
@@ -168,14 +281,75 @@ class ParseWindow(QtGui.QMainWindow, Ui_MainWindow):
                 self.endTimeEdit.setEnabled(1)
                 self.excelCheckBox.setEnabled(1)
                 self.parseButton.setEnabled(1)
-                
+
                 # Change label to give user feedback
                 self.changableLabel.setText(self.fullFileName + ' successfully loaded.')
             
             else:
                 self.changableLabel.setText(self.fullFileName + ' is not a VitalView file')
-
-                
+    
+    def enableButtons(self):
+        self.filterLabel.setEnabled(1)
+        self.filterLine.setEnabled(1)
+        self.startDateLabel.setEnabled(1)
+        self.startDateCombo.setEnabled(1)
+        self.startTimeLabel.setEnabled(1)
+        self.startTimeEdit.setEnabled(1)
+        self.endDateLabel.setEnabled(1)
+        self.endDateCombo.setEnabled(1)
+        self.endTimeEdit.setEnabled(1)
+        self.excelCheckBox.setEnabled(1)
+        self.parseButton.setEnabled(1)
+        
+    def disableButtons(self):
+        self.filterLabel.setEnabled(0)
+        self.filterLine.setEnabled(0)
+        self.startDateLabel.setEnabled(0)
+        self.startDateCombo.setEnabled(0)
+        self.startTimeLabel.setEnabled(0)
+        self.startTimeEdit.setEnabled(0)
+        self.endDateLabel.setEnabled(0)
+        self.endDateCombo.setEnabled(0)
+        self.endTimeEdit.setEnabled(0)
+        self.excelCheckBox.setEnabled(0)
+        self.parseButton.setEnabled(0)
+    
+    def parseButton_clicked(self):
+        rwparser = RwParser()
+        if self.excelCheckBox.isChecked():
+            # filter, calculate hourly, running streaks etc.
+            rwparser.parseDistData(self.distCsvName, self.fileNameNoExt, 
+                    self.newFolderPath, self.qtStartDateTime, self.qtEndDateTime)
+            self.disableButtons()
+            msgBox = QtGui.QMessageBox()
+            msgBox.setText("Exporting to Excel. Will take a few minutes...")
+            msgBox.exec_()
+            
+            # Turn off controls
+            self.changableLabel.setText("Parsing complete.")
+            
+            # Export to Excel
+            # rwparser.exportToExcel(self.fileNameNoExt, self.newFolderPath)
+            
+            # Turn controls back on when done
+            self.changableLabel.setText("Parsing complete.")
+            self.enableButtons()
+        else: # pass onto
+            
+            rwparser.parseDistData(self.distCsvName, self.fileNameNoExt, 
+                self.newFolderPath, self.qtStartDateTime, self.qtEndDateTime)
+            self.changableLabel.setText("Parsing complete.")
+            self.disableButtons()
+            # call csv2execlwb.py
+            subprocess.call(['python', 'csv2excelwb.py', self.newFolderPath, self.fileNameNoExt])
+            
+            # Pop-up info box for user feedback
+            msgBox = QtGui.QMessageBox()
+            QtGui.QPlainTextEdit.LineWrapMode
+            msgBox.setText("Parsing complete. Results can be found in the '" + self.newFolderPath + "' directory.")
+            msgBox.exec_()
+            self.enableButtons()
+          
 if __name__ == '__main__':
         # File variables
         fullFilePath = ''

@@ -89,7 +89,8 @@ class Ui_MainWindow(object):
         self.excelCheckBox = QtGui.QCheckBox(self.centralwidget)
         self.excelCheckBox.setEnabled(False)
         self.excelCheckBox.setGeometry(QtCore.QRect(20, 310, 241, 20))
-        self.excelCheckBox.setChecked(True)
+        self.excelCheckBox.setVisible(False) ######################################################################
+        self.excelCheckBox.setChecked(False) ######################################################################
         self.excelCheckBox.setObjectName("excelCheckBox")
         self.endTimeEdit = QtGui.QTimeEdit(self.centralwidget)
         self.endTimeEdit.setEnabled(False)
