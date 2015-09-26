@@ -4,7 +4,6 @@ import os
 from PySide import QtCore, QtGui
 #from xlsxwriter import Workbook  # import python Excel parser
 from openpyxl import Workbook, load_workbook
-from _sqlite3 import Row
 #from pyexcelerate import Workbook
 
 # Regular Expressions and static (unchanging) variables 

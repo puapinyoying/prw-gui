@@ -1,10 +1,9 @@
 import subprocess
 import sys  # import OS/system level tools
-from os import path
+import os
 from PySide import QtCore, QtGui
 from prwlib.mainwindow import Ui_MainWindow
 from prwlib.rwparser import RwParser
-from datetime import datetime, timedelta
 
 TUTORIAL = """Tutorial
 
@@ -32,7 +31,7 @@ Instructions:
 
         2) Once loaded, if you would like to filter the data by start and end date/time use the drop-down boxes and time edit boxes (time format in hh:mm:ss)
 
-        3) The program will automatically output csv files of all the calculations listed above and automatically export the csv files into a single Excel workbook.
+        3) The program will automatically output csv files of all the calculations listed above. Option to export the csv files into a single Excel workbook.
 
         4) Click "Parse Data" to start."""
 
@@ -44,6 +43,8 @@ class ParseWindow(QtGui.QMainWindow, Ui_MainWindow):
         QtGui.QMainWindow.__init__(self, parent)
         self.setupUi(self)
         
+        # Path to csv2excelwb script or executable. Should be in ./tools/
+        self.csv2excelwbPath = ''
         # Excel checkbox option
         self.excelCheckState = QtCore.Qt.CheckState.Checked
         
@@ -78,6 +79,7 @@ class ParseWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.qtEndDateTime = QtCore.QDateTime()
         
         # Tool/menu bar clicks
+        self.actionOpen.triggered.connect(self.openButton_clicked)
         self.actionQuit.triggered.connect(self.actionQuit_triggered)
         self.actionAbout.triggered.connect(self.actionAbout_triggered)
         self.actionTutorial.triggered.connect(self.actionTutorial_triggered)
@@ -91,7 +93,7 @@ class ParseWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.startTimeEdit.editingFinished.connect(self.endTimeEdit_edited)
         
         # Check box doesn't need to connect to function, will check directly
-        # after pushing the parse button
+        self.excelCheckBox.clicked.connect(self.excelCheckBox_clicked)
         
         # Push buttons
         self.openButton.clicked.connect(self.openButton_clicked)
@@ -270,17 +272,7 @@ class ParseWindow(QtGui.QMainWindow, Ui_MainWindow):
                 self.limitTimeEdit()
                   
                 # Allow user to access filters and buttons
-                self.filterLabel.setEnabled(1)
-                self.filterLine.setEnabled(1)
-                self.startDateLabel.setEnabled(1)
-                self.startDateCombo.setEnabled(1)
-                self.startTimeLabel.setEnabled(1)
-                self.startTimeEdit.setEnabled(1)
-                self.endDateLabel.setEnabled(1)
-                self.endDateCombo.setEnabled(1)
-                self.endTimeEdit.setEnabled(1)
-                self.excelCheckBox.setEnabled(1)
-                self.parseButton.setEnabled(1)
+                self.enableButtons()
 
                 # Change label to give user feedback
                 self.changableLabel.setText(self.fullFileName + ' successfully loaded.')
@@ -289,6 +281,8 @@ class ParseWindow(QtGui.QMainWindow, Ui_MainWindow):
                 self.changableLabel.setText(self.fullFileName + ' is not a VitalView file')
     
     def enableButtons(self):
+        self.actionOpen.setEnabled(1)
+        self.openButton.setEnabled(1)
         self.filterLabel.setEnabled(1)
         self.filterLine.setEnabled(1)
         self.startDateLabel.setEnabled(1)
@@ -302,6 +296,8 @@ class ParseWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.parseButton.setEnabled(1)
         
     def disableButtons(self):
+        self.actionOpen.setEnabled(0)
+        self.openButton.setEnabled(0)
         self.filterLabel.setEnabled(0)
         self.filterLine.setEnabled(0)
         self.startDateLabel.setEnabled(0)
@@ -314,44 +310,74 @@ class ParseWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.excelCheckBox.setEnabled(0)
         self.parseButton.setEnabled(0)
     
+    def lookForCsv2Excel(self):
+        currWorkingDir = os.getcwd()
+        csv2excelwbPath = os.path.join(currWorkingDir, 'tools', 'csv2excelwb.exe' )
+        if os.path.exists(csv2excelwbPath):
+            self.csv2excelwbPath = csv2excelwbPath
+            return True
+        else:
+            msgBox = QtGui.QMessageBox()
+            QtGui.QPlainTextEdit.LineWrapMode
+            msgBox.setText("Cannot find csv2exelwb script/executable in the 'tools' folder.")
+            msgBox.exec_()
+            self.excelCheckBox.setChecked(False)
+
+    def callCsv2Excel(self):
+        if self.lookForCsv2Excel():
+            subprocess.call([self.csv2excelwbPath, self.newFolderPath, self.fileNameNoExt])
+
+    def excelCheckBox_clicked(self):
+        self.lookForCsv2Excel()
+
     def parseButton_clicked(self):
+        csv2excelwbPath = self.lookForCsv2Excel()
         rwparser = RwParser()
+        savePath = self.dirName + "/" + self.fileNameNoExt
         if self.excelCheckBox.isChecked():
-            
             # filter, calculate hourly, running streaks etc.
+            
             rwparser.parseDistData(self.distCsvName, self.fileNameNoExt, 
                 self.newFolderPath, self.qtStartDateTime, self.qtEndDateTime)
-            
+            self.changableLabel.setText("Parsing complete.")
+
             self.disableButtons()
             
+            self.changableLabel.setText("Compiling excel worksheet. Please wait...")
+
+            # Pop-up info box for user feedback
             msgBox = QtGui.QMessageBox()
-            msgBox.setText("Exporting to Excel. Will take a few minutes...")
+            QtGui.QPlainTextEdit.LineWrapMode
+            msgBox.setText("Compiling Excel workbook with csv output. Please wait. (Don't panic, the program may not respond for a few minutes.)")
+            msgBox.exec_()
+
+            # call csv2execlwb.py/.exe
+            self.callCsv2Excel()
+
+            # More feedback
+            msgBox = QtGui.QMessageBox()
+            msgBox.setText("Excel file complete! Results can be found in the " + savePath + " directory.")
             msgBox.exec_()
             
             # Export to Excel
+            # This block is not currently used. Reserved for future. Hopefully,
+            # I can figure out the segfault error and integrate the export
+            # to excel portion back into the script.
             # rwparser.exportToExcel(self.fileNameNoExt, self.newFolderPath)
             
-            # Turn off controls
-            self.changableLabel.setText("Parsing complete.")
-            
-
-            
+            self.changableLabel.setText("Finished compiling Excel workbook.")
             # Turn controls back on when done
-            self.changableLabel.setText("Parsing complete.")
             self.enableButtons()
         else: # pass onto
-            
             rwparser.parseDistData(self.distCsvName, self.fileNameNoExt, 
                 self.newFolderPath, self.qtStartDateTime, self.qtEndDateTime)
             self.changableLabel.setText("Parsing complete.")
             self.disableButtons()
-            # call csv2execlwb.py
-            subprocess.call(['python', 'csv2excelwb.py', self.newFolderPath, self.fileNameNoExt])
             
             # Pop-up info box for user feedback
             msgBox = QtGui.QMessageBox()
             QtGui.QPlainTextEdit.LineWrapMode
-            msgBox.setText("Parsing complete. Results can be found in the '" + self.newFolderPath + "' directory.")
+            msgBox.setText("Parsing complete. Results can be found in the " + savePath + " directory ")
             msgBox.exec_()
             self.enableButtons()
           
@@ -362,4 +388,3 @@ if __name__ == '__main__':
         MainApp = ParseWindow()
         MainApp.show()
         sys.exit(app.exec_())
-        print fullFilePath
